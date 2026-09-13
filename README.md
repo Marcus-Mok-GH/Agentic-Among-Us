@@ -1,3 +1,7 @@
+> **☕ Support my work**
+>
+> If this project has helped you, consider supporting my work on [**Buy Me a Coffee**](https://buymeacoffee.com/j6oiubzfnh).
+
 # Agentic Among Us
 
 ⭐ **If you find this project interesting, please leave a star!** It keeps me motivated to continue developing this AI simulation. ⭐
