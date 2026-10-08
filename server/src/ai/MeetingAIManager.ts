@@ -252,7 +252,7 @@ export class MeetingAIManager {
       const response = await aiService.getRawDecision(systemPrompt, userPrompt, {
         maxTokens: 200,
         temperature: 0.7,
-      });
+      }, context.agentId);
 
       if (!response) {
         aiLogger.warn('LLM discussion request failed', { agentId: context.agentId });
@@ -341,7 +341,7 @@ export class MeetingAIManager {
       const response = await aiService.getRawDecision(systemPrompt, userPrompt, {
         maxTokens: 150,
         temperature: 0.5,
-      });
+      }, context.agentId);
 
       if (!response) {
         aiLogger.warn('LLM vote request failed', { agentId: context.agentId });

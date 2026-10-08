@@ -853,8 +853,8 @@ Tasks per Agent:   5
 Map:               The Skeld
 Tick Rate:         60 Hz
 Vision System:     Radius-based with obstruction
-AI Backend:        Llama-3.2-1B-Instruct (Q5_K_M) via llama.cpp Docker
-LLM Performance:   ~60-150 tokens/sec, ~300-500ms per decision
+AI Backend:        Pollinations AI chat completions via server-side API key
+LLM Models:        Per-agent random assignment from POLLINATIONS_MODELS (default pool in README)
 ```
 
 ### LLM Prompt Optimizations

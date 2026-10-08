@@ -23,7 +23,7 @@ const DEFAULT_OPTIONS: Required<SimulationOptions> = {
   numAgents: 8,
   numImpostors: 2,
   tasksPerAgent: 5,
-  aiServerUrl: 'http://192.168.86.48:8080',
+  aiServerUrl: process.env.POLLINATIONS_BASE_URL ?? 'https://gen.pollinations.ai',
   enableAI: true,
   gameDurationMs: 10 * 60 * 1000, // 10 minutes
 };
@@ -144,6 +144,8 @@ export class GameSimulation {
    */
   private setupAICallbacks(): void {
     if (!this.aiService) return;
+
+    AIDecisionService.resetAgentModelAssignments();
 
     // Initialize AI state for each agent
     for (const agent of this.manager.getAgents()) {

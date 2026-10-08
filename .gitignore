@@ -28,3 +28,7 @@ dist-ssr
 
 # Docker management credentials
 docker-manage/.env
+
+# Application secrets
+.env
+!.env.example

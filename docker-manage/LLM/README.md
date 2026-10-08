@@ -2,6 +2,8 @@
 
 Scripts to manage the llama.cpp Docker container running on your home server (Ubuntu with RTX 3090).
 
+> **Legacy/optional:** the simulation now uses Pollinations AI by default and does not need this local server. Configure `POLLINATIONS_API_KEY` in the repository-root `.env` as described in the [main README](../../README.md). These scripts only manage a separate llama.cpp deployment.
+
 ## Quick Start
 
 ```powershell
