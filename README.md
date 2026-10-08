@@ -74,20 +74,20 @@ This project creates a fully autonomous Among Us simulation where:
 
 - **Node.js 22 LTS** or newer
 - **npm 10+**
-- **LLM Server**: Qwen2.5-3B-Instruct running via llama.cpp Docker (see [`docker-manage/`](./docker-manage/README.md))
+- **Pollinations AI API key**: required for AI agent decisions ([create a key](https://enter.pollinations.ai/keys))
 
-## LLM Server Setup
+## AI Provider Setup
 
-The simulation requires a local LLM server for AI agent decisions. We use **Qwen2.5-3B-Instruct** (Q4_K_M quantization) running in Docker with CUDA:
+The simulation sends server-side, OpenAI-compatible chat-completion requests to Pollinations. Configure the provider before starting the server:
 
-```powershell
-# From docker-manage directory
-.\deploy.ps1
+```bash
+cp .env.example .env
+# Edit .env and set POLLINATIONS_API_KEY to your own key.
 ```
 
-This downloads the model and starts llama.cpp on port 8080. See [`docker-manage/README.md`](./docker-manage/README.md) for full setup instructions.
+The server automatically loads the repository-root `.env` in development and when started with `npm --workspace @agentrunner/server run start`. Each agent is assigned one stable, randomly selected model from this default pool: `openai/gpt-6-luna`, `nvidia/nemotron-3.5-lightning`, `minimax/minimax-m3`, `deepseek/deepseek-v4.1-flash`, and `mistralai/mistral-large-3`. Set `POLLINATIONS_MODELS` to override the comma-separated pool, or `POLLINATIONS_MODEL` to pin all agents to one model. The base URL defaults to `https://gen.pollinations.ai` and may be overridden with `POLLINATIONS_BASE_URL`.
 
-**Performance**: ~180 tokens/sec on RTX 3090, ~300-400ms per agent decision.
+Keep the key in the server environment—never expose it through a `VITE_` variable or browser code. The older [`docker-manage/LLM/`](./docker-manage/LLM/README.md) scripts remain available for managing a standalone llama.cpp server, but are no longer needed by the simulation's default AI backend.
 
 ## Installation
 
@@ -161,7 +161,7 @@ agentrunner/
 
 - **Server**: Fastify, WebSocket, TypeScript
 - **Client**: React 19, PixiJS 8, Zustand
-- **AI**: Qwen2.5-3B-Instruct via llama.cpp Docker (CUDA)
+- **AI**: Pollinations AI chat completions (server-side API key)
 - **Build**: Vite, Vitest, ESLint, TypeScript 5.9
 
 ### WebSocket Protocol

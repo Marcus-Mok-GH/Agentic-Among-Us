@@ -26,6 +26,7 @@ import {
   parseAIResponse
 } from './prompts/AgentPrompts.js';
 import { getLLMQueue, type LLMQueueStats } from './LLMQueue.js';
+import { getPollinationsModelPool, PollinationsAIClient, type ChatMessage, type AIModelOptions } from './PollinationsAIClient.js';
 import { logLLMTrainingData } from './LLMTrainingDataLogger.js';
 import { aiLogger, speechLogger, thoughtLogger } from '../logging/index.js';
 
@@ -248,75 +249,6 @@ function cleanSelfReferences(message: string, speakerName: string): string {
   message = message.replace(new RegExp(`\\b${speakerName}\\s+looks\\b`, 'gi'), 'I look');
   message = message.replace(new RegExp(`\\b${speakerName}\\s+seems\\b`, 'gi'), 'I seem');
   return message;
-}// ========== AI Model Client (inline for server-side) ==========
-
-interface ChatMessage {
-  role: 'system' | 'user' | 'assistant';
-  content: string;
-}
-
-interface AIModelOptions {
-  temperature?: number;
-  maxTokens?: number;
-}
-
-class AIModelClient {
-  private baseUrl: string;
-
-  constructor(baseUrl: string = 'http://192.168.86.48:8080') {
-    this.baseUrl = baseUrl.replace(/\/$/, '');
-  }
-
-  /**
-   * Make a raw LLM request (without queue - used internally by queued methods)
-   */
-  private async makeRequest(systemPrompt: string, userPrompt: string, options?: AIModelOptions): Promise<string> {
-    const messages: ChatMessage[] = [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userPrompt }
-    ];
-
-    const payload = {
-      messages,
-      temperature: options?.temperature ?? 0.8,
-      max_tokens: options?.maxTokens ?? 200,
-      stream: false
-    };
-
-    const response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-
-    if (!response.ok) {
-      throw new Error(`AI API error: ${response.status}`);
-    }
-
-    const result = await response.json() as { 
-      choices?: Array<{ message?: { content?: string } }>;
-      usage?: { prompt_tokens?: number; completion_tokens?: number };
-    };
-    
-    // Record token usage for metrics
-    const queue = getLLMQueue(10000);
-    if (result.usage) {
-      queue.recordTokenUsage(
-        result.usage.prompt_tokens || 0,
-        result.usage.completion_tokens || 0
-      );
-    }
-    
-    return result.choices?.[0]?.message?.content || '';
-  }
-
-  /**
-   * Get a decision through the LLM queue (serialized, with timeout)
-   */
-  async getDecision(systemPrompt: string, userPrompt: string, options?: AIModelOptions): Promise<string> {
-    const queue = getLLMQueue(10000); // 10 second timeout for LLM requests
-    return queue.enqueue(() => this.makeRequest(systemPrompt, userPrompt, options));
-  }
 }
 
 // ========== Trigger Configuration ==========
@@ -375,7 +307,14 @@ interface ConversationTurn {
 // ========== Main Service ==========
 
 export class AIDecisionService {
-  private aiClient: AIModelClient;
+  private aiClient: PollinationsAIClient;
+  private readonly modelPool: string[];
+  private static readonly agentModelAssignments = new Map<string, string>();
+
+  static resetAgentModelAssignments(): void {
+    this.agentModelAssignments.clear();
+  }
+
   private config: TriggerConfig;
   private agentStates: Map<string, AgentAIState>;
   private pendingThoughts: ThoughtEvent[];
@@ -395,7 +334,8 @@ export class AIDecisionService {
   private conversationIdCounter: number;
 
   constructor(aiServerUrl?: string, config?: Partial<TriggerConfig>) {
-    this.aiClient = new AIModelClient(aiServerUrl);
+    this.aiClient = new PollinationsAIClient({ baseUrl: aiServerUrl });
+    this.modelPool = getPollinationsModelPool();
     this.config = { ...DEFAULT_TRIGGER_CONFIG, ...config };
     this.agentStates = new Map();
     this.pendingThoughts = [];
@@ -412,22 +352,40 @@ export class AIDecisionService {
    * Get LLM queue statistics for monitoring
    */
   getQueueStats(): LLMQueueStats {
-    return getLLMQueue(10000).getStats();
+    return getLLMQueue(30000).getStats();
   }
 
   /**
    * Get current thinking coefficient from the queue
    */
   getThinkingCoefficient(): number {
-    return getLLMQueue(10000).calculateThinkingCoefficient();
+    return getLLMQueue(30000).calculateThinkingCoefficient();
+  }
+  private requestForAgent(
+    agentId: string,
+    systemPrompt: string,
+    userPrompt: string,
+    options?: AIModelOptions
+  ): Promise<string> {
+    return this.aiClient.getDecision(systemPrompt, userPrompt, {
+      ...options,
+      model: this.getModelForAgent(agentId),
+    });
   }
 
   /**
    * Get a raw LLM decision response.
-   * This exposes the underlying AIModelClient for use by external systems (e.g., MeetingAIManager).
+   * This exposes the Pollinations client for external systems such as meeting decisions.
    */
-  async getRawDecision(systemPrompt: string, userPrompt: string, options?: AIModelOptions): Promise<string> {
-    return this.aiClient.getDecision(systemPrompt, userPrompt, options);
+  async getRawDecision(
+    systemPrompt: string,
+    userPrompt: string,
+    options?: AIModelOptions,
+    agentId?: string
+  ): Promise<string> {
+    return agentId
+      ? this.requestForAgent(agentId, systemPrompt, userPrompt, options)
+      : this.aiClient.getDecision(systemPrompt, userPrompt, options);
   }
 
   /**
@@ -506,7 +464,19 @@ export class AIDecisionService {
     return agent?.color ?? 0;
   }
 
+  /** Return the stable model assigned to an agent for the current match. */
+  getModelForAgent(agentId: string): string {
+    const assignedModel = AIDecisionService.agentModelAssignments.get(agentId);
+    if (assignedModel) return assignedModel;
+
+    const model = this.modelPool[Math.floor(Math.random() * this.modelPool.length)];
+    AIDecisionService.agentModelAssignments.set(agentId, model);
+    aiLogger.info('Assigned Pollinations model to agent', { agentId, model });
+    return model;
+  }
+
   initializeAgent(agentId: string): void {
+    this.getModelForAgent(agentId);
     const now = Date.now();
     // Randomize initial state to desynchronize agents
     const randomOffset = Math.random() * 15000; // 0-15 second random offset
@@ -723,7 +693,7 @@ export class AIDecisionService {
     let rawResponse = '';
 
     try {
-      const response = await this.aiClient.getDecision(systemPrompt, userPrompt, {
+      const response = await this.requestForAgent(context.agentId, systemPrompt, userPrompt, {
         temperature: 0.8,
         maxTokens: 100  // Reduced from 250 for faster responses (~900ms vs ~2.2s)
       });
@@ -864,7 +834,7 @@ export class AIDecisionService {
     let rawResponse = '';
     
     try {
-      rawResponse = await this.aiClient.getDecision(systemPrompt, userPrompt, {
+      rawResponse = await this.requestForAgent(context.agentId, systemPrompt, userPrompt, {
         temperature: 0.9,
         maxTokens: 250  // Increased for JSON response
       });
@@ -1154,7 +1124,7 @@ What do you say out loud? Keep it brief and natural (1-2 sentences).`;
     let usedFallback = false;
     let silent = false;
     try {
-      message = await this.aiClient.getDecision(systemPrompt, userPrompt, {
+      message = await this.requestForAgent(context.agentId, systemPrompt, userPrompt, {
         temperature: 0.9,
         maxTokens: 60
       });
@@ -1281,7 +1251,7 @@ Keep it brief (1-2 sentences). Start the conversation!`;
     let message: string;
     let usedFallback = false;
     try {
-      message = await this.aiClient.getDecision(systemPrompt, userPrompt, {
+      message = await this.requestForAgent(context.agentId, systemPrompt, userPrompt, {
         temperature: 0.9,
         maxTokens: 80
       });
@@ -1873,7 +1843,7 @@ ${isImpostor ? 'Remember: Deflect suspicion, blend in, maybe cast doubt on other
 
     let message: string;
     try {
-      message = await this.aiClient.getDecision(systemPrompt, userPrompt, {
+      message = await this.requestForAgent(context.agentId, systemPrompt, userPrompt, {
         temperature: 0.9,
         maxTokens: 80
       });
@@ -2131,4 +2101,3 @@ export function getAIDecisionService(aiServerUrl?: string): AIDecisionService {
 export function resetAIDecisionService(): void {
   serviceInstance = null;
 }
-
